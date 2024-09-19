@@ -57,6 +57,7 @@ class GraspNetNode:
         self.camera_info = None
         
         # 模型路径
+        # self.model_path = "/home/lab/GenDexGrasp/GraspNet_ros/STL/Gripper_part_stl.STL"
         self.model_path = "/home/lab/GenDexGrasp/GraspNet_ros/STL/joller_gripper_stl.STL"
         
 
