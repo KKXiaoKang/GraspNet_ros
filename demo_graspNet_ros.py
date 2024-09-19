@@ -11,12 +11,15 @@ import importlib
 import scipy.io as scio
 from PIL import Image
 
+import numpy as np
 import rospy
 from cv_bridge import CvBridge
 from visualization_msgs.msg import MarkerArray, Marker
 from sensor_msgs.msg import Image, CameraInfo
-from PIL import Image as PILImage
+from geometry_msgs.msg import Pose
+from tf.transformations import quaternion_from_matrix
 
+from PIL import Image as PILImage
 import torch
 from graspnetAPI import GraspGroup
 
@@ -54,7 +57,8 @@ class GraspNetNode:
         self.camera_info = None
         
         # 模型路径
-        self.model_path = "/home/lab/GenDexGrasp/GraspNet_ros/STL/Makerbot_Gripper_Assembled.stl"
+        self.model_path = "/home/lab/GenDexGrasp/GraspNet_ros/STL/joller_gripper_stl.STL"
+        
 
         # 预定义掩膜，表示感兴趣的工作区域
         self.workspace_mask = np.array(PILImage.open(os.path.join(data_dir, 'workspace_mask.png')))
@@ -210,6 +214,7 @@ class GraspNetNode:
         """Publish grasp poses as markers."""
         rospy.loginfo("Publishing grasps...")
         marker_array = MarkerArray()
+
         for i, grasp in enumerate(grasps):
             marker = Marker()
             marker.header.frame_id = frame_id
@@ -217,26 +222,85 @@ class GraspNetNode:
             marker.action = Marker.ADD
             marker.mesh_resource = "file://" + self.model_path
 
-            marker.pose = self.grasp_pose_to_camera_pose(grasp) # Convert grasp to ROS pose
-            
-            marker.scale.x = 0.1
-            marker.scale.y = 0.02
-            marker.scale.z = 0.02
-            
+            # 提取抓取位置和平移信息
+            grasp_pose = self.grasp_pose_to_camera_pose(grasp)  # 将抓取姿态转换为 ROS Pose
+
+            # 设置抓取的姿态
+            marker.pose = grasp_pose  # 直接使用转换后的姿态
+
+            # 设置 marker 的缩放
+            marker.scale.x = 0.0005
+            marker.scale.y = 0.0005
+            marker.scale.z = 0.0005
+
+            # 设置 marker 的颜色
             marker.color.a = 1.0
             marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
+            marker.color.g = 0.0
+            marker.color.b = 1.0
+
+            # 为 marker 分配唯一 ID
             marker.id = i
-            
+
+            # 添加到 marker 数组
             marker_array.markers.append(marker)
 
+        # 发布 marker 数组
         self.marker_pub.publish(marker_array)
 
-    def grasp_pose_to_camera_pose(self, grasp_pose):
-        """Transform grasp pose to camera pose."""
-        # TODO: implement this function
-        pass
+
+    def grasp_pose_to_camera_pose(self, grasp):
+        """将抓取姿态转换为相机坐标系下的 ROS pose."""
+        """
+        具体含义如下：
+         grasp : Grasp: score:0.6945472955703735, width:0.07659896463155746, height:0.019999999552965164, depth:0.03999999910593033, 
+                        translation:[ 0.03289932 -0.5208031   1.783     ]
+                        rotation:
+                        [[ 0.77450156 -0.33385786 -0.53729534]
+                         [ 0.27431256  0.94262344 -0.19029897]
+                         [ 0.57        0.          0.8216447 ]]
+
+        可调取属性如下：
+        {'grasp_array': array([ 0.6945473 ,  0.07659896,  0.02      ,  0.04      ,  0.77450156,
+                               -0.33385786, -0.53729534,  0.27431256,  0.94262344, -0.19029897,
+                                0.57      ,  0.        ,  0.8216447 ,  0.03289932, -0.5208031 ,
+                                1.783     , -1.        ],
+        
+        调取函数
+        print( " grasp score :", grasp.grasp_array[0:1])
+        print( " grasp width :", grasp.grasp_array[1:2])
+        print( " grasp height :", grasp.grasp_array[2:3])
+        print( " grasp depth :", grasp.grasp_array[3:4])
+        print( " grasp translation  : ", grasp.grasp_array[13:16])
+        print( " grasp rotation     : ", np.array(grasp.grasp_array[4:13]).reshape(3, 3))
+        """
+
+        pose = Pose()
+
+        # 提取平移 (translation)，即 grasp_array 中的第 13、14、15 个值
+        translation = grasp.grasp_array[13:16]
+        pose.position.x = translation[0]
+        pose.position.y = translation[1]
+        pose.position.z = translation[2]
+
+        # 提取旋转矩阵 (rotation)，即 grasp_array 中的第 5 到 13 个值
+        rotation_matrix = np.array(grasp.grasp_array[4:13]).reshape(3, 3)
+
+        # 将 3x3 旋转矩阵转换为 4x4 同构矩阵
+        homogenous_matrix = np.eye(4)
+        homogenous_matrix[:3, :3] = rotation_matrix
+
+        # 将旋转矩阵转换为四元数
+        quaternion = quaternion_from_matrix(homogenous_matrix)
+
+        # 设置四元数到 ROS pose
+        pose.orientation.x = quaternion[0]
+        pose.orientation.y = quaternion[1]
+        pose.orientation.z = quaternion[2]
+        pose.orientation.w = quaternion[3]
+
+        return pose
+
     
     def run(self):
         """Main loop to process and publish grasps."""
@@ -251,9 +315,7 @@ class GraspNetNode:
                 if cfgs.collision_thresh > 0:
                     grasps = self.collision_detection(grasps, np.array(cloud.points))
                 # 发布最终抓取姿态
-                print( " grasps : ", grasps)
-
-                # self.publish_grasps(grasps, frame_id='camera_color_optical_frame')
+                self.publish_grasps(grasps, frame_id='camera_color_optical_frame')
             rate.sleep()
 
 if __name__ == '__main__':
