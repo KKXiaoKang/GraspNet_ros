@@ -10,6 +10,7 @@ import argparse
 import importlib
 import scipy.io as scio
 from PIL import Image
+import time
 
 import numpy as np
 import rospy
@@ -113,7 +114,7 @@ class GraspNetNode:
     def process_data(self):
         global data_dir
         """Process images and generate point cloud."""
-        rospy.loginfo("Processing data...")
+        # rospy.loginfo("Processing data...")
         if self.rgb_image is None or self.depth_image is None or self.camera_info is None:
             return None
         # RGB 归一化
@@ -181,7 +182,7 @@ class GraspNetNode:
     
     def get_grasps(self, end_points):
         """Run inference to get grasp poses."""
-        rospy.loginfo("Running inference...")
+        # rospy.loginfo("Running inference...")
         with torch.no_grad():
             end_points = self.net(end_points)
             grasp_preds = pred_decode(end_points)
@@ -196,7 +197,7 @@ class GraspNetNode:
         """
             碰撞检测 | NMS输出
         """
-        rospy.loginfo("Collision detection...")
+        # rospy.loginfo("Collision detection...")
         # 碰撞检测
         mfcdetector = ModelFreeCollisionDetector(cloud, voxel_size=cfgs.voxel_size)
         collision_mask = mfcdetector.detect(gg, approach_dist=0.05, collision_thresh=cfgs.collision_thresh)
@@ -213,7 +214,7 @@ class GraspNetNode:
 
     def publish_grasps(self, grasps, frame_id='camera_color_optical_frame'):
         """Publish grasp poses as markers."""
-        rospy.loginfo("Publishing grasps...")
+        # rospy.loginfo("Publishing grasps...")
         marker_array = MarkerArray()
 
         for i, grasp in enumerate(grasps):
@@ -305,9 +306,11 @@ class GraspNetNode:
     
     def run(self):
         """Main loop to process and publish grasps."""
-        rate = rospy.Rate(10)  # 10 Hz
+        rate = rospy.Rate(30)  # 30 Hz
         while not rospy.is_shutdown():
             if self.rgb_image is not None and self.depth_image is not None:
+                # 开始计时
+                start_time = time.time()
                 # 处理为open3d格式
                 end_points, cloud = self.process_data()
                 # 获取抓取姿态
@@ -317,6 +320,10 @@ class GraspNetNode:
                     grasps = self.collision_detection(grasps, np.array(cloud.points))
                 # 发布最终抓取姿态
                 self.publish_grasps(grasps, frame_id='camera_color_optical_frame')
+                # 结束计时
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                rospy.loginfo(f"Processing time: {elapsed_time:.4f} seconds")  # 打印耗时
             rate.sleep()
 
 if __name__ == '__main__':
